@@ -38,13 +38,27 @@ class Generator(nn.Module):
             nn.ConvTranspose2d(ngf, ngf // 2, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ngf // 2),
             nn.ReLU(True),
-            # State size: ngf//2 x 128 x 128 -> nc x 256 x 256
-            nn.ConvTranspose2d(ngf // 2, nc, 4, 2, 1, bias=False),
+            # State size: ngf//2 x 128 x 128 -> ngf//4 x 256 x 256 (intermediate layer for smoother transition)
+            nn.ConvTranspose2d(ngf // 2, ngf // 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf // 4),
+            nn.ReLU(True),
+            # Add spatial coherence with larger kernel convolution
+            nn.Conv2d(ngf // 4, ngf // 8, 5, 1, 2, bias=False),  # 5x5 kernel for spatial coherence
+            nn.BatchNorm2d(ngf // 8),
+            nn.ReLU(True),
+            # Final layer to binary output with spatial smoothing
+            nn.Conv2d(ngf // 8, nc, 3, 1, 1, bias=False),  # 3x3 kernel for final smoothing
+            nn.BatchNorm2d(nc),  # Add batch norm even on final layer
             nn.Sigmoid()  # Output binary masks in [0,1] range
         )
 
     def forward(self, input):
-        return self.main(input)
+        output = self.main(input)
+        # Apply temperature scaling to encourage more binary-like outputs
+        # This makes the sigmoid more steep, pushing values closer to 0 or 1
+        temperature = 0.1  # Lower temperature = more binary
+        output = torch.sigmoid((output - 0.5) / temperature) 
+        return output
 
 class Discriminator(nn.Module):
     def __init__(self, nc, ndf):

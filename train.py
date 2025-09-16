@@ -112,7 +112,13 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 fake = netG(noise)
                 gen_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
                 output = netD(fake).view(-1)
-                errG = criterion(output, gen_labels)
+                errG_adv = criterion(output, gen_labels)
+                
+                # Add binary regularization loss to encourage values close to 0 or 1
+                # Penalize values around 0.5 (middle of sigmoid range)
+                binary_loss = torch.mean(4 * fake * (1 - fake))  # This is maximized at 0.5, minimized at 0 and 1
+                errG = errG_adv + 0.1 * binary_loss  # Weight the binary loss component
+                
                 errG.backward()
                 optimizerG.step()
             
