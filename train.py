@@ -136,7 +136,7 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
         save_single_tif_image(fake, output_dir, epoch)
         
         # Save model every 5 epochs
-        if (epoch + 1) % 5 == 0:
+        if (epoch + 1) % 50 == 0:
             model_dir = os.path.join(output_dir, "models")
             os.makedirs(model_dir, exist_ok=True)
             torch.save({
