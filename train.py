@@ -147,8 +147,16 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
             # WGAN Generator loss: -E[D(G(z))]
             errG_adv = -torch.mean(fake_output)
             
-            # Remove binary constraints - let model learn smooth transitions naturally
-            errG = errG_adv
+            # Add gentle smoothness constraint to reduce noise
+            # TV loss encourages spatial smoothness
+            tv_loss = torch.mean(torch.abs(fake[:, :, :, :-1] - fake[:, :, :, 1:])) + \
+                     torch.mean(torch.abs(fake[:, :, :-1, :] - fake[:, :, 1:, :]))
+            
+            # Gentle binary encouragement (much weaker than before)
+            binary_loss = torch.mean(fake * (1 - fake))  # Minimized when fake is 0 or 1
+            
+            # Combined generator loss with gentle constraints
+            errG = errG_adv + 0.1 * tv_loss + 0.05 * binary_loss
             
             errG.backward()
             # Gradient clipping for stability
@@ -164,7 +172,7 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 print(f'[{epoch:4d}/{num_epochs}][{i:3d}/{len(dataloader)}] '
                       f'Loss_D: {errD.item():8.4f} | Loss_G: {errG.item():8.4f} | '
                       f'D(x): {D_x:6.4f} | D(G(z)): {D_G_z:6.4f} | '
-                      f'GP: {gp.item():6.4f}')
+                      f'GP: {gp.item():6.4f} | TV: {tv_loss.item():6.4f} | Bin: {binary_loss.item():6.4f}')
             
             G_losses.append(errG.item())
             D_losses.append(errD.item())
