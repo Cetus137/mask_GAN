@@ -6,24 +6,44 @@ from data_loader import get_data_loader
 import torchvision.utils as vutils
 from PIL import Image
 import numpy as np
+import matplotlib.pyplot as plt
 import os
 
-def save_single_tif_image(tensor, output_dir, epoch):
-    """Save single 256x256 grayscale TIF file"""
-    # Take the first (and only) image from the tensor
-    img = tensor[0]
-    # Convert single image tensor to numpy
-    img_np = img.squeeze(0).cpu().numpy()  # Remove channel dimension if single channel
+def save_comparison_image(fake_tensor, real_tensor, output_dir, epoch):
+    """Save comparison figure with generated and real images side by side"""
     
-    # Convert from [0, 1] to [0, 255] for saving
-    img_np = (img_np * 255).clip(0, 255).astype(np.uint8)
+    # Convert tensors to numpy
+    fake_img = fake_tensor[0].squeeze(0).cpu().numpy()  # Remove channel dimension
+    real_img = real_tensor[0].squeeze(0).cpu().numpy()  # Remove channel dimension
     
-    # Save as grayscale TIF
-    im = Image.fromarray(img_np, mode='L')
-    filename = f"{output_dir}/generated_epoch_{epoch:03d}.tif"
-    im.save(filename)
+    # Create comparison figure
+    fig, axes = plt.subplots(1, 2, figsize=(10, 5))
     
-    print(f"Saved generated image for epoch {epoch}")
+    # Plot generated image
+    axes[0].imshow(fake_img, cmap='gray', vmin=0, vmax=1)
+    axes[0].set_title(f'Generated (Epoch {epoch})')
+    axes[0].axis('off')
+    
+    # Plot real target image
+    axes[1].imshow(real_img, cmap='gray', vmin=0, vmax=1)
+    axes[1].set_title('Real Target')
+    axes[1].axis('off')
+    
+    plt.tight_layout()
+    
+    # Save comparison figure
+    filename = f"{output_dir}/comparison_epoch_{epoch:03d}.png"
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    # Also save individual TIF files
+    fake_np = (fake_img * 255).clip(0, 255).astype(np.uint8)
+    real_np = (real_img * 255).clip(0, 255).astype(np.uint8)
+    
+    Image.fromarray(fake_np, mode='L').save(f"{output_dir}/generated_epoch_{epoch:03d}.tif")
+    Image.fromarray(real_np, mode='L').save(f"{output_dir}/target_epoch_{epoch:03d}.tif")
+    
+    print(f"Saved comparison image for epoch {epoch}")
 
 def gradient_penalty(netD, real_data, fake_data, device, lambda_gp=10):
     """Calculate gradient penalty for WGAN-GP"""
@@ -194,11 +214,14 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
         print(f"Final D(G(z)): {D_G_z:.6f} (want ~0.5)")
         print("=" * 40)
         
-        # Save generated image every 10 epochs
-        if (epoch + 1) % 10 == 0:
+        # Save comparison image every 10 epochs
+        if (epoch + 1) % 10 == 0 and len(dataloader) > 0:
             with torch.no_grad():
                 fake = netG(fixed_noise).detach().cpu()
-            save_single_tif_image(fake, output_dir, epoch)
+                # Get a real sample for comparison
+                real_sample = next(iter(dataloader))  # Get first batch
+                real_sample = real_sample.cpu()
+            save_comparison_image(fake, real_sample, output_dir, epoch)
         
         # Save model every 5 epochs
         if (epoch + 1) % 50 == 0:
