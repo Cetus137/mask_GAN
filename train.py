@@ -25,6 +25,35 @@ def save_single_tif_image(tensor, output_dir, epoch):
     
     print(f"Saved generated image for epoch {epoch}")
 
+def gradient_penalty(netD, real_data, fake_data, device, lambda_gp=10):
+    """Calculate gradient penalty for WGAN-GP"""
+    batch_size = real_data.size(0)
+    alpha = torch.rand(batch_size, 1, 1, 1, device=device)
+    alpha = alpha.expand_as(real_data)
+    
+    interpolated = alpha * real_data + (1 - alpha) * fake_data
+    interpolated = interpolated.requires_grad_(True)
+    
+    # Calculate discriminator output for interpolated samples
+    d_interpolated = netD(interpolated)
+    
+    # Calculate gradients
+    gradients = torch.autograd.grad(
+        outputs=d_interpolated,
+        inputs=interpolated,
+        grad_outputs=torch.ones_like(d_interpolated),
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True
+    )[0]
+    
+    # Flatten gradients
+    gradients = gradients.view(batch_size, -1)
+    gradient_norm = gradients.norm(2, dim=1)
+    penalty = lambda_gp * ((gradient_norm - 1) ** 2).mean()
+    
+    return penalty
+
 def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, beta1, output_dir):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
@@ -52,91 +81,100 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     netG.apply(weights_init)
     netD.apply(weights_init)
     
-    criterion = nn.BCELoss()
+    print(f"Generator parameters: {sum(p.numel() for p in netG.parameters()):,}")
+    print(f"Discriminator parameters: {sum(p.numel() for p in netD.parameters()):,}")
     
     fixed_noise = torch.randn(1, nz, 1, 1, device=device)  # Single image per epoch
     
-    # Clean binary labels without smoothing
-    real_label = 1.0
-    fake_label = 0.0
+    # WGAN-GP parameters
+    lambda_gp = 10
+    n_critic = 5  # Train discriminator 5 times per generator update
     
-    # Balanced discriminator handicapping - give discriminator slightly more learning power
-    optimizerD = optim.Adam(netD.parameters(), lr=lr * 0.1, betas=(beta1, 0.999))  # Discriminator learns 10x slower
-    optimizerG = optim.Adam(netG.parameters(), lr=lr * 2, betas=(beta1, 0.999))  # Generator learns 2x faster
+    # Optimizers for WGAN-GP (using RMSprop is also common, but Adam works well)
+    optimizerD = optim.Adam(netD.parameters(), lr=0.0001, betas=(0.0, 0.9))  # Lower lr for stability
+    optimizerG = optim.Adam(netG.parameters(), lr=0.0001, betas=(0.0, 0.9))
     
     img_list = []
     G_losses = []
     D_losses = []
     iters = 0
     
-    print("Starting Training Loop...")
+    print("Starting WGAN-GP Training Loop...")
+    print(f"Using device: {device}")
+    print(f"Lambda GP: {lambda_gp}, n_critic: {n_critic}")
+    
     for epoch in range(num_epochs):
         for i, data in enumerate(dataloader, 0):
-            
             real_cpu = data.to(device)
             b_size = real_cpu.size(0)
             
-            # Update D network every 8 iterations - give generator more time to learn spatial patterns
-            if i % 8 == 0:
+            ############################
+            # (1) Train Discriminator/Critic
+            ############################
+            for _ in range(n_critic):
                 netD.zero_grad()
-                real_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
-                output = netD(real_cpu).view(-1)
-                errD_real = criterion(output, real_labels)
-                errD_real.backward()
-                D_x = output.mean().item()
                 
+                # Train with real data
+                real_output = netD(real_cpu).view(-1)
+                errD_real = -torch.mean(real_output)  # WGAN loss: -E[D(x)]
+                
+                # Train with fake data
                 noise = torch.randn(b_size, nz, 1, 1, device=device)
-                fake = netG(noise)
-                fake_labels = torch.full((b_size,), fake_label, dtype=torch.float, device=device)
-                output = netD(fake.detach()).view(-1)
-                errD_fake = criterion(output, fake_labels)
-                errD_fake.backward()
-                D_G_z1 = output.mean().item()
-                errD = errD_real + errD_fake
+                fake = netG(noise).detach()  # Detach to avoid training G
+                fake_output = netD(fake).view(-1)
+                errD_fake = torch.mean(fake_output)   # WGAN loss: E[D(G(z))]
+                
+                # Gradient penalty
+                gp = gradient_penalty(netD, real_cpu, fake, device, lambda_gp)
+                
+                # Total discriminator loss
+                errD = errD_real + errD_fake + gp
+                errD.backward()
                 optimizerD.step()
-            else:
-                # Still need to compute these for logging
-                with torch.no_grad():
-                    output = netD(real_cpu).view(-1)  
-                    D_x = output.mean().item()
-                    noise = torch.randn(b_size, nz, 1, 1, device=device)
-                    fake = netG(noise)
-                    output = netD(fake.detach()).view(-1)
-                    D_G_z1 = output.mean().item()
-                    errD = torch.tensor(0.0)
             
-            # Train generator 5 times per iteration - strong advantage for spatial learning
-            for g_step in range(5):
-                netG.zero_grad()
-                noise = torch.randn(b_size, nz, 1, 1, device=device)
-                fake = netG(noise)
-                gen_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
-                output = netD(fake).view(-1)
-                errG_adv = criterion(output, gen_labels)
-                
-                # Add binary regularization loss to encourage values close to 0 or 1
-                # Penalize values around 0.5 (middle of sigmoid range)
-                binary_loss = torch.mean(4 * fake * (1 - fake))  # This is maximized at 0.5, minimized at 0 and 1
-                
-                # Add spatial consistency loss to encourage large-scale structure
-                # Penalize high-frequency noise by encouraging spatial smoothness
-                fake_grad_x = torch.abs(fake[:, :, :, 1:] - fake[:, :, :, :-1])  # Horizontal gradients
-                fake_grad_y = torch.abs(fake[:, :, 1:, :] - fake[:, :, :-1, :])  # Vertical gradients
-                spatial_loss = torch.mean(fake_grad_x) + torch.mean(fake_grad_y)
-                
-                # Add total variation loss for even stronger spatial coherence
-                tv_loss = torch.mean(torch.abs(fake[:, :, :, 1:] - fake[:, :, :, :-1])) + \
-                         torch.mean(torch.abs(fake[:, :, 1:, :] - fake[:, :, :-1, :]))
-                
-                errG = errG_adv + 0.05 * binary_loss + 0.2 * spatial_loss + 0.1 * tv_loss
-                
-                errG.backward()
-                optimizerG.step()
+            ############################
+            # (2) Train Generator
+            ############################
+            netG.zero_grad()
             
-            D_G_z2 = output.mean().item()
+            # Generate fake data
+            noise = torch.randn(b_size, nz, 1, 1, device=device)
+            fake = netG(noise)
+            fake_output = netD(fake).view(-1)
             
-            if i % 50 == 0:
-                print(f'[{epoch}/{num_epochs}][{i}/{len(dataloader)}] Loss_D: {errD.item():.4f} Loss_G: {errG.item():.4f} D(x): {D_x:.4f} D(G(z)): {D_G_z1:.4f} / {D_G_z2:.4f}')
+            # WGAN Generator loss: -E[D(G(z))]
+            errG_adv = -torch.mean(fake_output)
+            
+            # Add spatial regularization losses for better structure
+            # Binary regularization - encourage 0 or 1 values
+            binary_loss = torch.mean(4 * fake * (1 - fake))
+            
+            # Total variation loss for spatial smoothness
+            tv_h = torch.mean(torch.abs(fake[:, :, :, 1:] - fake[:, :, :, :-1]))
+            tv_v = torch.mean(torch.abs(fake[:, :, 1:, :] - fake[:, :, :-1, :]))
+            tv_loss = tv_h + tv_v
+            
+            # Edge-preserving smoothness loss
+            edge_loss = torch.mean(torch.abs(fake[:, :, 2:, :] - 2*fake[:, :, 1:-1, :] + fake[:, :, :-2, :]))
+            edge_loss += torch.mean(torch.abs(fake[:, :, :, 2:] - 2*fake[:, :, :, 1:-1] + fake[:, :, :, :-2]))
+            
+            # Combined generator loss
+            errG = errG_adv + 0.1 * binary_loss + 0.5 * tv_loss + 0.2 * edge_loss
+            
+            errG.backward()
+            optimizerG.step()
+            
+            # Calculate metrics for logging
+            D_x = torch.mean(real_output).item()
+            D_G_z = torch.mean(fake_output).item()
+            
+            # Verbose logging every batch
+            if i % 10 == 0:
+                print(f'[{epoch:4d}/{num_epochs}][{i:3d}/{len(dataloader)}] '
+                      f'Loss_D: {errD.item():8.4f} | Loss_G: {errG.item():8.4f} | '
+                      f'D(x): {D_x:6.4f} | D(G(z)): {D_G_z:6.4f} | '
+                      f'GP: {gp.item():6.4f} | Binary: {binary_loss.item():6.4f} | '
+                      f'TV: {tv_loss.item():6.4f} | Edge: {edge_loss.item():6.4f}')
             
             G_losses.append(errG.item())
             D_losses.append(errD.item())
@@ -147,6 +185,16 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
                 
             iters += 1
+        
+        # Epoch summary
+        avg_D_loss = sum(D_losses[-len(dataloader):]) / len(dataloader) if D_losses else 0
+        avg_G_loss = sum(G_losses[-len(dataloader):]) / len(dataloader) if G_losses else 0
+        print(f"\n=== EPOCH {epoch+1}/{num_epochs} SUMMARY ===")
+        print(f"Average D Loss: {avg_D_loss:.6f}")
+        print(f"Average G Loss: {avg_G_loss:.6f}")
+        print(f"Final D(x): {D_x:.6f} (want ~0.5)")
+        print(f"Final D(G(z)): {D_G_z:.6f} (want ~0.5)")
+        print("=" * 40)
         
         # Save generated image every 10 epochs
         if (epoch + 1) % 10 == 0:
