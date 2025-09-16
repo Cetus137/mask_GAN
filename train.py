@@ -8,21 +8,22 @@ from PIL import Image
 import numpy as np
 import os
 
-def save_individual_tif_images(tensor, output_dir, epoch):
-    """Save individual 256x256 grayscale TIF files"""
-    for i, img in enumerate(tensor):
-        # Convert single image tensor to numpy
-        img_np = img.squeeze(0).cpu().numpy()  # Remove channel dimension if single channel
-        
-        # Denormalize from [-1, 1] to [0, 255]
-        img_np = ((img_np + 1) * 127.5).clip(0, 255).astype(np.uint8)
-        
-        # Save as grayscale TIF
-        im = Image.fromarray(img_np, mode='L')
-        filename = f"{output_dir}/generated_epoch_{epoch:03d}_img_{i:02d}.tif"
-        im.save(filename)
+def save_single_tif_image(tensor, output_dir, epoch):
+    """Save single 256x256 grayscale TIF file"""
+    # Take the first (and only) image from the tensor
+    img = tensor[0]
+    # Convert single image tensor to numpy
+    img_np = img.squeeze(0).cpu().numpy()  # Remove channel dimension if single channel
     
-    print(f"Saved {len(tensor)} individual images for epoch {epoch}")
+    # Denormalize from [-1, 1] to [0, 255]
+    img_np = ((img_np + 1) * 127.5).clip(0, 255).astype(np.uint8)
+    
+    # Save as grayscale TIF
+    im = Image.fromarray(img_np, mode='L')
+    filename = f"{output_dir}/generated_epoch_{epoch:03d}.tif"
+    im.save(filename)
+    
+    print(f"Saved generated image for epoch {epoch}")
 
 def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, beta1, output_dir):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -48,7 +49,7 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     
     criterion = nn.BCELoss()
     
-    fixed_noise = torch.randn(16, nz, 1, 1, device=device)  # Reduced for 256x256 images
+    fixed_noise = torch.randn(1, nz, 1, 1, device=device)  # Single image per epoch
     
     # Label smoothing to prevent discriminator from becoming too confident
     real_label = 0.9  # Instead of 1.0
@@ -118,7 +119,22 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 
             iters += 1
         
-        # Save generated images at the end of each epoch
+        # Save generated image at the end of each epoch
         with torch.no_grad():
             fake = netG(fixed_noise).detach().cpu()
-        save_individual_tif_images(fake, output_dir, epoch)
+        save_single_tif_image(fake, output_dir, epoch)
+        
+        # Save model every 5 epochs
+        if (epoch + 1) % 5 == 0:
+            model_dir = os.path.join(output_dir, "models")
+            os.makedirs(model_dir, exist_ok=True)
+            torch.save({
+                'epoch': epoch,
+                'netG_state_dict': netG.state_dict(),
+                'netD_state_dict': netD.state_dict(),
+                'optimizerG_state_dict': optimizerG.state_dict(),
+                'optimizerD_state_dict': optimizerD.state_dict(),
+                'G_losses': G_losses,
+                'D_losses': D_losses,
+            }, f"{model_dir}/checkpoint_epoch_{epoch:03d}.pth")
+            print(f"Saved model checkpoint at epoch {epoch}")
