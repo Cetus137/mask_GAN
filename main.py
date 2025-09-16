@@ -13,8 +13,8 @@ def main():
     parser.add_argument('--ngf', type=int, default=64, help='Size of feature maps in the generator.')
     parser.add_argument('--ndf', type=int, default=64, help='Size of feature maps in the discriminator.')
     parser.add_argument('--num_epochs', type=int, default=50, help='Number of training epochs.')
-    parser.add_argument('--batch_size', type=int, default=128, help='Batch size during training.')
-    parser.add_argument('--image_size', type=int, default=64, help='Spatial size of training images.')
+    parser.add_argument('--batch_size', type=int, default=32, help='Batch size during training.')
+    parser.add_argument('--image_size', type=int, default=256, help='Spatial size of training images.')
     parser.add_argument('--lr', type=float, default=0.0002, help='Learning rate for optimizers.')
     parser.add_argument('--beta1', type=float, default=0.5, help='Beta1 hyperparameter for Adam optimizers.')
     

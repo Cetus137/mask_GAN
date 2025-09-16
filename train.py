@@ -4,7 +4,25 @@ import torch.optim as optim
 from models import Generator, Discriminator
 from data_loader import get_data_loader
 import torchvision.utils as vutils
+from PIL import Image
+import numpy as np
 import os
+
+def save_grayscale_tif(tensor, filename, nrow=8):
+    """Save tensor as grayscale TIF file"""
+    # Convert tensor to numpy and denormalize
+    grid = vutils.make_grid(tensor, nrow=nrow, normalize=True, padding=2)
+    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
+    
+    # Convert RGB to grayscale if needed
+    if ndarr.shape[2] == 3:
+        ndarr = np.dot(ndarr[...,:3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
+    elif ndarr.shape[2] == 1:
+        ndarr = ndarr.squeeze(-1)
+    
+    # Save as grayscale TIF
+    im = Image.fromarray(ndarr, mode='L')
+    im.save(filename)
 
 def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, beta1, output_dir):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -19,7 +37,7 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     
     criterion = nn.BCELoss()
     
-    fixed_noise = torch.randn(64, nz, 1, 1, device=device)
+    fixed_noise = torch.randn(16, nz, 1, 1, device=device)  # Reduced for 256x256 images
     
     real_label = 1.
     fake_label = 0.
@@ -81,4 +99,4 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
         # Save generated image at the end of each epoch
         with torch.no_grad():
             fake = netG(fixed_noise).detach().cpu()
-        vutils.save_image(fake, f"{output_dir}/fake_samples_epoch_{epoch}.png", normalize=True)
+        save_grayscale_tif(fake, f"{output_dir}/fake_samples_epoch_{epoch}.tif", nrow=4)
