@@ -137,10 +137,11 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 
             iters += 1
         
-        # Save generated image at the end of each epoch
-        with torch.no_grad():
-            fake = netG(fixed_noise).detach().cpu()
-        save_single_tif_image(fake, output_dir, epoch)
+        # Save generated image every 10 epochs
+        if (epoch + 1) % 10 == 0:
+            with torch.no_grad():
+                fake = netG(fixed_noise).detach().cpu()
+            save_single_tif_image(fake, output_dir, epoch)
         
         # Save model every 5 epochs
         if (epoch + 1) % 50 == 0:
