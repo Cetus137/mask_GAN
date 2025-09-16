@@ -58,40 +58,36 @@ class Generator(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self, nc, ndf):
         super(Discriminator, self).__init__()
-        # Much simpler discriminator with ~500k-1M parameters
+        # Much smaller discriminator to balance with 1M parameter generator
+        # Target: ~500k-1M parameters to match generator
         
         self.main = nn.Sequential(
-            # Input: nc x 256 x 256 -> ndf x 128 x 128
-            nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
+            # Input: nc x 256 x 256 -> ndf//2 x 128 x 128
+            nn.Conv2d(nc, ndf // 2, 4, 2, 1, bias=False),
             nn.LeakyReLU(0.2, inplace=True),
             
-            # State: ndf x 128 x 128 -> ndf*2 x 64 x 64
+            # State: ndf//2 x 128 x 128 -> ndf x 64 x 64
+            nn.Conv2d(ndf // 2, ndf, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf),
+            nn.LeakyReLU(0.2, inplace=True),
+            
+            # State: ndf x 64 x 64 -> ndf*2 x 32 x 32
             nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
             
-            # State: ndf*2 x 64 x 64 -> ndf*4 x 32 x 32
-            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ndf * 4),
+            # State: ndf*2 x 32 x 32 -> ndf*2 x 16 x 16
+            nn.Conv2d(ndf * 2, ndf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
             
-            # State: ndf*4 x 32 x 32 -> ndf*8 x 16 x 16
-            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ndf * 8),
+            # State: ndf*2 x 16 x 16 -> ndf*2 x 8 x 8
+            nn.Conv2d(ndf * 2, ndf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 2),
             nn.LeakyReLU(0.2, inplace=True),
             
-            # State: ndf*8 x 16 x 16 -> ndf*8 x 8 x 8
-            nn.Conv2d(ndf * 8, ndf * 8, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-            
-            # State: ndf*8 x 8 x 8 -> ndf*8 x 4 x 4
-            nn.Conv2d(ndf * 8, ndf * 8, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-            
-            # State: ndf*8 x 4 x 4 -> 1 x 1 x 1
-            nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=False)
+            # State: ndf*2 x 8 x 8 -> 1 x 1 x 1
+            nn.Conv2d(ndf * 2, 1, 8, 1, 0, bias=False)
             # No sigmoid for WGAN-GP (critic outputs raw scores)
         )
 
