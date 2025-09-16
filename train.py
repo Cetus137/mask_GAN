@@ -47,16 +47,22 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     netG = Generator(nz, ngf, nc).to(device)
     netD = Discriminator(nc, ndf).to(device)
     
+    # Apply proper weight initialization
+    from models import weights_init
+    netG.apply(weights_init)
+    netD.apply(weights_init)
+    
     criterion = nn.BCELoss()
     
     fixed_noise = torch.randn(1, nz, 1, 1, device=device)  # Single image per epoch
     
-    # Label smoothing to prevent discriminator from becoming too confident
-    real_label = 0.9  # Instead of 1.0
-    fake_label = 0.1  # Instead of 0.0
+    # Moderate label smoothing
+    real_label = 1.0
+    fake_label = 0.0
     
+    # Use different learning rates for G and D for better stability
     optimizerD = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
-    optimizerG = optim.Adam(netG.parameters(), lr=lr, betas=(beta1, 0.999))
+    optimizerG = optim.Adam(netG.parameters(), lr=lr * 2, betas=(beta1, 0.999))  # Generator learns 2x faster
     
     img_list = []
     G_losses = []
@@ -89,20 +95,17 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
             errD = errD_real + errD_fake
             optimizerD.step()
             
-            # Update G network (train generator more if discriminator is too strong)
-            g_train_steps = 2 if D_x > 0.8 else 1  # Train G more if D is too confident
-            
-            for _ in range(g_train_steps):
-                netG.zero_grad()
-                # Generate new fake images for generator training
-                noise = torch.randn(b_size, nz, 1, 1, device=device)
-                fake = netG(noise)
-                # Generator wants discriminator to think fake images are real
-                gen_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
-                output = netD(fake).view(-1)
-                errG = criterion(output, gen_labels)
-                errG.backward()
-                optimizerG.step()
+            # Update G network
+            netG.zero_grad()
+            # Generate new fake images for generator training
+            noise = torch.randn(b_size, nz, 1, 1, device=device)
+            fake = netG(noise)
+            # Generator wants discriminator to think fake images are real
+            gen_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
+            output = netD(fake).view(-1)
+            errG = criterion(output, gen_labels)
+            errG.backward()
+            optimizerG.step()
             
             D_G_z2 = output.mean().item()
             

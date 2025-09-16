@@ -24,8 +24,8 @@ def get_data_loader(data_dir, batch_size, image_size):
     transform = transforms.Compose([
         transforms.Resize((256, 256)),  # Always resize to 256x256
         transforms.ToTensor(),
-        transforms.Normalize([0.5], [0.5]),
-        transforms.Lambda(lambda x: torch.where(x > 0.5, 1.0, 0.0))
+        transforms.Normalize([0.5], [0.5])  # Normalize to [-1, 1] to match generator output
+        # Removed binary threshold - keep continuous values for better training
     ])
     dataset = CellMaskDataset(root_dir=data_dir, transform=transform)
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
