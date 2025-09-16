@@ -15,8 +15,8 @@ def save_single_tif_image(tensor, output_dir, epoch):
     # Convert single image tensor to numpy
     img_np = img.squeeze(0).cpu().numpy()  # Remove channel dimension if single channel
     
-    # Denormalize from [-1, 1] to [0, 255]
-    img_np = ((img_np + 1) * 127.5).clip(0, 255).astype(np.uint8)
+    # Convert from [0, 1] to [0, 255] for saving
+    img_np = (img_np * 255).clip(0, 255).astype(np.uint8)
     
     # Save as grayscale TIF
     im = Image.fromarray(img_np, mode='L')
@@ -56,12 +56,12 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     
     fixed_noise = torch.randn(1, nz, 1, 1, device=device)  # Single image per epoch
     
-    # Moderate label smoothing
+    # Clean labels without smoothing
     real_label = 1.0
     fake_label = 0.0
     
-    # Use different learning rates for G and D for better stability
-    optimizerD = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
+    # Heavily favor generator learning - discriminator is too strong
+    optimizerD = optim.Adam(netD.parameters(), lr=lr * 0.1, betas=(beta1, 0.999))  # Discriminator learns 10x slower
     optimizerG = optim.Adam(netG.parameters(), lr=lr * 2, betas=(beta1, 0.999))  # Generator learns 2x faster
     
     img_list = []
@@ -73,34 +73,42 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     for epoch in range(num_epochs):
         for i, data in enumerate(dataloader, 0):
             
-            # Update D network
-            netD.zero_grad()
             real_cpu = data.to(device)
             b_size = real_cpu.size(0)
             
-            real_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
-            output = netD(real_cpu).view(-1)
-            errD_real = criterion(output, real_labels)
-            errD_real.backward()
-            D_x = output.mean().item()
+            # Update D network every other iteration to slow it down
+            if i % 2 == 0:
+                netD.zero_grad()
+                real_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
+                output = netD(real_cpu).view(-1)
+                errD_real = criterion(output, real_labels)
+                errD_real.backward()
+                D_x = output.mean().item()
+                
+                noise = torch.randn(b_size, nz, 1, 1, device=device)
+                fake = netG(noise)
+                fake_labels = torch.full((b_size,), fake_label, dtype=torch.float, device=device)
+                output = netD(fake.detach()).view(-1)
+                errD_fake = criterion(output, fake_labels)
+                errD_fake.backward()
+                D_G_z1 = output.mean().item()
+                errD = errD_real + errD_fake
+                optimizerD.step()
+            else:
+                # Still need to compute these for logging
+                with torch.no_grad():
+                    output = netD(real_cpu).view(-1)  
+                    D_x = output.mean().item()
+                    noise = torch.randn(b_size, nz, 1, 1, device=device)
+                    fake = netG(noise)
+                    output = netD(fake.detach()).view(-1)
+                    D_G_z1 = output.mean().item()
+                    errD = torch.tensor(0.0)
             
-            noise = torch.randn(b_size, nz, 1, 1, device=device)
-            fake = netG(noise)
-            
-            fake_labels = torch.full((b_size,), fake_label, dtype=torch.float, device=device)
-            output = netD(fake.detach()).view(-1)
-            errD_fake = criterion(output, fake_labels)
-            errD_fake.backward()
-            D_G_z1 = output.mean().item()
-            errD = errD_real + errD_fake
-            optimizerD.step()
-            
-            # Update G network
+            # Update G network every iteration  
             netG.zero_grad()
-            # Generate new fake images for generator training
             noise = torch.randn(b_size, nz, 1, 1, device=device)
             fake = netG(noise)
-            # Generator wants discriminator to think fake images are real
             gen_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
             output = netD(fake).view(-1)
             errG = criterion(output, gen_labels)

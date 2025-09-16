@@ -40,7 +40,7 @@ class Generator(nn.Module):
             nn.ReLU(True),
             # State size: ngf//2 x 128 x 128 -> nc x 256 x 256
             nn.ConvTranspose2d(ngf // 2, nc, 4, 2, 1, bias=False),
-            nn.Tanh()
+            nn.Sigmoid()  # Output binary masks in [0,1] range
         )
 
     def forward(self, input):
