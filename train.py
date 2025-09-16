@@ -147,33 +147,14 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
             # WGAN Generator loss: -E[D(G(z))]
             errG_adv = -torch.mean(fake_output)
             
-            # Add spatial regularization losses for better structure
-            # Binary regularization - encourage 0 or 1 values
-            binary_loss = torch.mean(4 * fake * (1 - fake))
+            # Simple binary constraint - no spatial assumptions
             
-            # Total variation loss for spatial smoothness
-            tv_h = torch.mean(torch.abs(fake[:, :, :, 1:] - fake[:, :, :, :-1]))
-            tv_v = torch.mean(torch.abs(fake[:, :, 1:, :] - fake[:, :, :-1, :]))
-            tv_loss = tv_h + tv_v
+            # Simple binary constraint - just encourage values to be close to 0 or 1
+            # This is the minimal constraint needed for binary masks
+            binary_constraint = torch.mean(torch.minimum(fake, 1-fake))  # Minimized when fake is 0 or 1
             
-            # Edge-preserving smoothness loss
-            edge_loss = torch.mean(torch.abs(fake[:, :, 2:, :] - 2*fake[:, :, 1:-1, :] + fake[:, :, :-2, :]))
-            edge_loss += torch.mean(torch.abs(fake[:, :, :, 2:] - 2*fake[:, :, :, 1:-1] + fake[:, :, :, :-2]))
-            
-            # Add hard thresholding loss - penalize values not close to 0 or 1
-            threshold_loss = torch.mean(torch.minimum(fake, 1-fake))  # Minimized when fake is 0 or 1
-            
-            # Add entropy loss to discourage gray values
-            eps = 1e-8
-            entropy_loss = -torch.mean(fake * torch.log(fake + eps) + (1-fake) * torch.log(1-fake + eps))
-            
-            # Add connectivity loss to encourage coherent regions (shape-agnostic)
-            # This encourages pixels to be similar to their neighbors
-            connectivity_loss = torch.mean(torch.abs(fake[:, :, :-1, :] - fake[:, :, 1:, :])) + \
-                              torch.mean(torch.abs(fake[:, :, :, :-1] - fake[:, :, :, 1:]))
-            
-            # Combined generator loss with much stronger binary constraints (no shape assumptions)
-            errG = errG_adv + 3.0 * binary_loss + 0.1 * tv_loss + 0.1 * edge_loss + 2.0 * threshold_loss + 1.0 * entropy_loss + 0.3 * connectivity_loss
+            # Combined generator loss - adversarial + binary constraint only
+            errG = errG_adv + 1.0 * binary_constraint
             
             errG.backward()
             # Gradient clipping for stability
@@ -189,8 +170,7 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 print(f'[{epoch:4d}/{num_epochs}][{i:3d}/{len(dataloader)}] '
                       f'Loss_D: {errD.item():8.4f} | Loss_G: {errG.item():8.4f} | '
                       f'D(x): {D_x:6.4f} | D(G(z)): {D_G_z:6.4f} | '
-                      f'GP: {gp.item():6.4f} | Binary: {binary_loss.item():6.4f} | '
-                      f'TV: {tv_loss.item():6.4f} | Thresh: {threshold_loss.item():6.4f} | Entropy: {entropy_loss.item():6.4f}')
+                      f'GP: {gp.item():6.4f} | Binary: {binary_constraint.item():6.4f}')
             
             G_losses.append(errG.item())
             D_losses.append(errD.item())
