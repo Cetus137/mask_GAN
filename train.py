@@ -90,9 +90,9 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     lambda_gp = 10
     n_critic = 5  # Train discriminator 5 times per generator update
     
-    # Optimizers for WGAN-GP (using RMSprop is also common, but Adam works well)
-    optimizerD = optim.Adam(netD.parameters(), lr=0.0001, betas=(0.0, 0.9))  # Lower lr for stability
-    optimizerG = optim.Adam(netG.parameters(), lr=0.0001, betas=(0.0, 0.9))
+    # Optimizers for WGAN-GP - using even lower learning rates for stability
+    optimizerD = optim.Adam(netD.parameters(), lr=0.00005, betas=(0.0, 0.9))  # Lower lr for WGAN-GP
+    optimizerG = optim.Adam(netG.parameters(), lr=0.00005, betas=(0.0, 0.9))  # Matching lr for balance
     
     img_list = []
     G_losses = []
@@ -130,6 +130,8 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 # Total discriminator loss
                 errD = errD_real + errD_fake + gp
                 errD.backward()
+                # Gradient clipping for stability
+                torch.nn.utils.clip_grad_norm_(netD.parameters(), max_norm=1.0)
                 optimizerD.step()
             
             ############################
@@ -158,10 +160,24 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
             edge_loss = torch.mean(torch.abs(fake[:, :, 2:, :] - 2*fake[:, :, 1:-1, :] + fake[:, :, :-2, :]))
             edge_loss += torch.mean(torch.abs(fake[:, :, :, 2:] - 2*fake[:, :, :, 1:-1] + fake[:, :, :, :-2]))
             
-            # Combined generator loss
-            errG = errG_adv + 0.1 * binary_loss + 0.5 * tv_loss + 0.2 * edge_loss
+            # Add hard thresholding loss - penalize values not close to 0 or 1
+            threshold_loss = torch.mean(torch.minimum(fake, 1-fake))  # Minimized when fake is 0 or 1
+            
+            # Add entropy loss to discourage gray values
+            eps = 1e-8
+            entropy_loss = -torch.mean(fake * torch.log(fake + eps) + (1-fake) * torch.log(1-fake + eps))
+            
+            # Add connectivity loss to encourage coherent regions (shape-agnostic)
+            # This encourages pixels to be similar to their neighbors
+            connectivity_loss = torch.mean(torch.abs(fake[:, :, :-1, :] - fake[:, :, 1:, :])) + \
+                              torch.mean(torch.abs(fake[:, :, :, :-1] - fake[:, :, :, 1:]))
+            
+            # Combined generator loss with much stronger binary constraints (no shape assumptions)
+            errG = errG_adv + 3.0 * binary_loss + 0.1 * tv_loss + 0.1 * edge_loss + 2.0 * threshold_loss + 1.0 * entropy_loss + 0.3 * connectivity_loss
             
             errG.backward()
+            # Gradient clipping for stability
+            torch.nn.utils.clip_grad_norm_(netG.parameters(), max_norm=1.0)
             optimizerG.step()
             
             # Calculate metrics for logging
@@ -174,7 +190,7 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                       f'Loss_D: {errD.item():8.4f} | Loss_G: {errG.item():8.4f} | '
                       f'D(x): {D_x:6.4f} | D(G(z)): {D_G_z:6.4f} | '
                       f'GP: {gp.item():6.4f} | Binary: {binary_loss.item():6.4f} | '
-                      f'TV: {tv_loss.item():6.4f} | Edge: {edge_loss.item():6.4f}')
+                      f'TV: {tv_loss.item():6.4f} | Thresh: {threshold_loss.item():6.4f} | Entropy: {entropy_loss.item():6.4f}')
             
             G_losses.append(errG.item())
             D_losses.append(errD.item())

@@ -107,9 +107,15 @@ class Generator(nn.Module):
         combined = torch.cat([large_scale, medium_scale, small_scale], dim=1)
         output = self.final_combine(combined)
         
-        # Apply temperature scaling to encourage more binary-like outputs
-        temperature = 0.1  # Lower temperature = more binary
-        output = torch.sigmoid((output - 0.5) / temperature) 
+        # Apply aggressive temperature scaling and hard thresholding
+        temperature = 0.01  # Much lower temperature = much more binary
+        output = torch.sigmoid((output - 0.5) / temperature)
+        
+        # Add progressive hard thresholding during training
+        # This pushes values toward 0 or 1 more aggressively
+        output = torch.where(output > 0.5, 
+                           0.9 * output + 0.1,  # Push high values toward 1
+                           0.9 * output)        # Push low values toward 0 
         return output
 
 class Discriminator(nn.Module):
