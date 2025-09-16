@@ -33,14 +33,16 @@ class CellMaskDataset(Dataset):
         return image
 
 def get_data_loader(data_dir, batch_size, image_size):
-    def binarize_simple(x):
+    def binarize_and_normalize(x):
         # Simple binarization: 0 for background, 1 for any cell
-        return torch.where(x > 0.0, 1.0, 0.0)
+        binary = torch.where(x > 0.0, 1.0, 0.0)
+        # Convert from [0,1] to [-1,1] range to match Tanh generator output
+        return binary * 2.0 - 1.0
     
     transform = transforms.Compose([
         transforms.Resize((256, 256)),  # Always resize to 256x256
         transforms.ToTensor(),  # Converts to [0,1] range and normalizes
-        transforms.Lambda(binarize_simple)  # Simple binarization
+        transforms.Lambda(binarize_and_normalize)  # Binarize and normalize to [-1,1]
     ])
     dataset = CellMaskDataset(root_dir=data_dir, transform=transform)
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)

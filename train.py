@@ -9,12 +9,47 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
+def gradient_penalty(netD, real_data, fake_data, device, lambda_gp=10):
+    """Calculate gradient penalty for WGAN-GP"""
+    batch_size = real_data.size(0)
+    
+    # Random weight term for interpolation between real and fake data
+    alpha = torch.rand(batch_size, 1, 1, 1, device=device)
+    
+    # Get random interpolation between real and fake data
+    interpolates = alpha * real_data + (1 - alpha) * fake_data
+    interpolates = interpolates.to(device)
+    interpolates.requires_grad_(True)
+    
+    # Get discriminator output for interpolated data
+    disc_interpolates = netD(interpolates)
+    
+    # Get gradients with respect to interpolates
+    gradients = torch.autograd.grad(
+        outputs=disc_interpolates,
+        inputs=interpolates,
+        grad_outputs=torch.ones_like(disc_interpolates),
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True
+    )[0]
+    
+    # Calculate gradient penalty
+    gradients = gradients.view(gradients.size(0), -1)
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * lambda_gp
+    
+    return gradient_penalty
+
 def save_comparison_image(fake_tensor, real_tensor, output_dir, epoch):
     """Save comparison figure with generated and real images side by side"""
     
-    # Convert tensors to numpy
+    # Convert tensors to numpy and handle [-1,1] range
     fake_img = fake_tensor[0].squeeze(0).cpu().numpy()  # Remove channel dimension
     real_img = real_tensor[0].squeeze(0).cpu().numpy()  # Remove channel dimension
+    
+    # Convert from [-1,1] to [0,1] for display
+    fake_img = (fake_img + 1.0) / 2.0
+    real_img = (real_img + 1.0) / 2.0
     
     # Create comparison figure
     fig, axes = plt.subplots(1, 2, figsize=(10, 5))
@@ -106,24 +141,22 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     
     fixed_noise = torch.randn(1, nz, 1, 1, device=device)  # Single image per epoch
     
-    # Traditional GAN parameters
-    criterion = nn.BCELoss()  # Binary Cross Entropy Loss
+    # WGAN-GP parameters - stable loss function
+    lambda_gp = 10
+    n_critic = 5  # Train discriminator 5 times per generator update
     
-    # Standard optimizers for traditional GAN
-    optimizerD = optim.Adam(netD.parameters(), lr=0.0002, betas=(0.5, 0.999))
-    optimizerG = optim.Adam(netG.parameters(), lr=0.0002, betas=(0.5, 0.999))
+    # WGAN-GP optimizers with lower learning rates
+    optimizerD = optim.Adam(netD.parameters(), lr=0.0001, betas=(0.0, 0.9))
+    optimizerG = optim.Adam(netG.parameters(), lr=0.0001, betas=(0.0, 0.9))
     
     img_list = []
     G_losses = []
     D_losses = []
     iters = 0
     
-    print("Starting Traditional GAN Training Loop...")
+    print("Starting WGAN-GP Training Loop...")
     print(f"Using device: {device}")
-    
-    # Create labels for real and fake
-    real_label = 1.
-    fake_label = 0.
+    print(f"Lambda GP: {lambda_gp}, n_critic: {n_critic}")
     
     for epoch in range(num_epochs):
         for i, data in enumerate(dataloader, 0):
@@ -131,48 +164,54 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
             b_size = real_cpu.size(0)
             
             ############################
-            # (1) Train Discriminator
+            # (1) Train Discriminator/Critic n_critic times
             ############################
-            netD.zero_grad()
-            
-            # Train with real data
-            label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
-            real_output = netD(real_cpu).view(-1)
-            errD_real = criterion(real_output, label)
-            errD_real.backward()
-            D_x = real_output.mean().item()
-            
-            # Train with fake data
-            noise = torch.randn(b_size, nz, 1, 1, device=device)
-            fake = netG(noise)
-            label.fill_(fake_label)
-            fake_output = netD(fake.detach()).view(-1)
-            errD_fake = criterion(fake_output, label)
-            errD_fake.backward()
-            D_G_z1 = fake_output.mean().item()
-            
-            # Total discriminator loss
-            errD = errD_real + errD_fake
-            optimizerD.step()
+            for _ in range(n_critic):
+                netD.zero_grad()
+                
+                # Train with real data
+                real_output = netD(real_cpu).view(-1)
+                errD_real = -torch.mean(real_output)  # WGAN loss: -E[D(x)]
+                
+                # Train with fake data
+                noise = torch.randn(b_size, nz, 1, 1, device=device)
+                fake = netG(noise).detach()  # Detach to avoid training G
+                fake_output = netD(fake).view(-1)
+                errD_fake = torch.mean(fake_output)   # WGAN loss: E[D(G(z))]
+                
+                # Gradient penalty
+                gp = gradient_penalty(netD, real_cpu, fake, device, lambda_gp)
+                
+                # Total discriminator loss
+                errD = errD_real + errD_fake + gp
+                errD.backward()
+                optimizerD.step()
             
             ############################
             # (2) Train Generator
             ############################
             netG.zero_grad()
             
-            # We want generator to fool discriminator, so use real labels
-            label.fill_(real_label)
+            # Generate fake data
+            noise = torch.randn(b_size, nz, 1, 1, device=device)
+            fake = netG(noise)
             fake_output = netD(fake).view(-1)
-            errG = criterion(fake_output, label)
+            
+            # WGAN Generator loss: -E[D(G(z))]
+            errG = -torch.mean(fake_output)
             errG.backward()
-            D_G_z2 = fake_output.mean().item()
             optimizerG.step()
+            
+            # Calculate metrics for logging
+            D_x = torch.mean(real_output).item()
+            D_G_z2 = torch.mean(fake_output).item()
             
             # Verbose logging every batch
             if i % 10 == 0:
                 print(f'[{epoch:4d}/{num_epochs}][{i:3d}/{len(dataloader)}] '
                       f'Loss_D: {errD.item():8.4f} | Loss_G: {errG.item():8.4f} | '
-                      f'D(x): {D_x:6.4f} | D(G(z)): {D_G_z1:6.4f}/{D_G_z2:6.4f}')
+                      f'D(x): {D_x:6.4f} | D(G(z)): {D_G_z2:6.4f} | '
+                      f'GP: {gp.item():6.4f}')
             
             G_losses.append(errG.item())
             D_losses.append(errD.item())
