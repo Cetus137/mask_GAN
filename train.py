@@ -4,10 +4,14 @@ import torch.optim as optim
 from models import Generator, Discriminator
 from data_loader import get_data_loader
 import torchvision.utils as vutils
+import os
 
 def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, beta1, output_dir):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+
     dataloader = get_data_loader(data_dir, batch_size, image_size)
     
     netG = Generator(nz, ngf, nc).to(device)
@@ -73,3 +77,8 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
                 
             iters += 1
+        
+        # Save generated image at the end of each epoch
+        with torch.no_grad():
+            fake = netG(fixed_noise).detach().cpu()
+        vutils.save_image(fake, f"{output_dir}/fake_samples_epoch_{epoch}.png", normalize=True)
