@@ -8,21 +8,21 @@ from PIL import Image
 import numpy as np
 import os
 
-def save_grayscale_tif(tensor, filename, nrow=8):
-    """Save tensor as grayscale TIF file"""
-    # Convert tensor to numpy and denormalize
-    grid = vutils.make_grid(tensor, nrow=nrow, normalize=True, padding=2)
-    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
+def save_individual_tif_images(tensor, output_dir, epoch):
+    """Save individual 256x256 grayscale TIF files"""
+    for i, img in enumerate(tensor):
+        # Convert single image tensor to numpy
+        img_np = img.squeeze(0).cpu().numpy()  # Remove channel dimension if single channel
+        
+        # Denormalize from [-1, 1] to [0, 255]
+        img_np = ((img_np + 1) * 127.5).clip(0, 255).astype(np.uint8)
+        
+        # Save as grayscale TIF
+        im = Image.fromarray(img_np, mode='L')
+        filename = f"{output_dir}/generated_epoch_{epoch:03d}_img_{i:02d}.tif"
+        im.save(filename)
     
-    # Convert RGB to grayscale if needed
-    if ndarr.shape[2] == 3:
-        ndarr = np.dot(ndarr[...,:3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
-    elif ndarr.shape[2] == 1:
-        ndarr = ndarr.squeeze(-1)
-    
-    # Save as grayscale TIF
-    im = Image.fromarray(ndarr, mode='L')
-    im.save(filename)
+    print(f"Saved {len(tensor)} individual images for epoch {epoch}")
 
 def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, beta1, output_dir):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -32,6 +32,17 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
 
     dataloader = get_data_loader(data_dir, batch_size, image_size)
     
+    # Print dataset information
+    dataset_size = len(dataloader.dataset)
+    num_batches = len(dataloader)
+    print(f"Dataset size: {dataset_size} images")
+    print(f"Number of batches: {num_batches}")
+    print(f"Batch size: {batch_size}")
+    
+    if dataset_size < batch_size:
+        print(f"Warning: Dataset size ({dataset_size}) is smaller than batch size ({batch_size})")
+        print("Consider reducing batch size or adding more training data")
+    
     netG = Generator(nz, ngf, nc).to(device)
     netD = Discriminator(nc, ndf).to(device)
     
@@ -39,8 +50,9 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     
     fixed_noise = torch.randn(16, nz, 1, 1, device=device)  # Reduced for 256x256 images
     
-    real_label = 1.
-    fake_label = 0.
+    # Label smoothing to prevent discriminator from becoming too confident
+    real_label = 0.9  # Instead of 1.0
+    fake_label = 0.1  # Instead of 0.0
     
     optimizerD = optim.Adam(netD.parameters(), lr=lr, betas=(beta1, 0.999))
     optimizerG = optim.Adam(netG.parameters(), lr=lr, betas=(beta1, 0.999))
@@ -58,30 +70,40 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
             netD.zero_grad()
             real_cpu = data.to(device)
             b_size = real_cpu.size(0)
-            label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
+            
+            real_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
             output = netD(real_cpu).view(-1)
-            errD_real = criterion(output, label)
+            errD_real = criterion(output, real_labels)
             errD_real.backward()
             D_x = output.mean().item()
             
             noise = torch.randn(b_size, nz, 1, 1, device=device)
             fake = netG(noise)
-            label.fill_(fake_label)
+            
+            fake_labels = torch.full((b_size,), fake_label, dtype=torch.float, device=device)
             output = netD(fake.detach()).view(-1)
-            errD_fake = criterion(output, label)
+            errD_fake = criterion(output, fake_labels)
             errD_fake.backward()
             D_G_z1 = output.mean().item()
             errD = errD_real + errD_fake
             optimizerD.step()
             
-            # Update G network
-            netG.zero_grad()
-            label.fill_(real_label)
-            output = netD(fake).view(-1)
-            errG = criterion(output, label)
-            errG.backward()
+            # Update G network (train generator more if discriminator is too strong)
+            g_train_steps = 2 if D_x > 0.8 else 1  # Train G more if D is too confident
+            
+            for _ in range(g_train_steps):
+                netG.zero_grad()
+                # Generate new fake images for generator training
+                noise = torch.randn(b_size, nz, 1, 1, device=device)
+                fake = netG(noise)
+                # Generator wants discriminator to think fake images are real
+                gen_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
+                output = netD(fake).view(-1)
+                errG = criterion(output, gen_labels)
+                errG.backward()
+                optimizerG.step()
+            
             D_G_z2 = output.mean().item()
-            optimizerG.step()
             
             if i % 50 == 0:
                 print(f'[{epoch}/{num_epochs}][{i}/{len(dataloader)}] Loss_D: {errD.item():.4f} Loss_G: {errG.item():.4f} D(x): {D_x:.4f} D(G(z)): {D_G_z1:.4f} / {D_G_z2:.4f}')
@@ -96,7 +118,7 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 
             iters += 1
         
-        # Save generated image at the end of each epoch
+        # Save generated images at the end of each epoch
         with torch.no_grad():
             fake = netG(fixed_noise).detach().cpu()
-        save_grayscale_tif(fake, f"{output_dir}/fake_samples_epoch_{epoch}.tif", nrow=4)
+        save_individual_tif_images(fake, output_dir, epoch)

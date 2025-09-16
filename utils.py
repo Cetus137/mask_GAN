@@ -4,28 +4,26 @@ import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
-def save_grayscale_tif(tensor, filename, nrow=8):
-    """Save tensor as grayscale TIF file"""
-    # Convert tensor to numpy and denormalize
-    grid = vutils.make_grid(tensor, nrow=nrow, normalize=True, padding=2)
-    ndarr = grid.mul(255).add_(0.5).clamp_(0, 255).permute(1, 2, 0).to('cpu', torch.uint8).numpy()
-    
-    # Convert RGB to grayscale if needed
-    if ndarr.shape[2] == 3:
-        ndarr = np.dot(ndarr[...,:3], [0.2989, 0.5870, 0.1140]).astype(np.uint8)
-    elif ndarr.shape[2] == 1:
-        ndarr = ndarr.squeeze(-1)
-    
-    # Save as grayscale TIF
-    im = Image.fromarray(ndarr, mode='L')
-    im.save(filename)
+def save_individual_tif_images(tensor, output_dir, prefix="generated"):
+    """Save individual 256x256 grayscale TIF files"""
+    for i, img in enumerate(tensor):
+        # Convert single image tensor to numpy
+        img_np = img.squeeze(0).cpu().numpy()  # Remove channel dimension if single channel
+        
+        # Denormalize from [-1, 1] to [0, 255]
+        img_np = ((img_np + 1) * 127.5).clip(0, 255).astype(np.uint8)
+        
+        # Save as grayscale TIF
+        im = Image.fromarray(img_np, mode='L')
+        filename = f"{output_dir}/{prefix}_img_{i:02d}.tif"
+        im.save(filename)
 
 def save_image_grid(img_list, output_dir):
     """
-    Saves a grid of images as grayscale TIF.
+    Saves individual images as grayscale TIFs.
     """
     if img_list:
-        save_grayscale_tif(img_list[-1], f"{output_dir}/gan_images.tif")
+        save_individual_tif_images(img_list[-1], output_dir, "gan_images")
 
 def save_loss_plot(G_losses, D_losses, output_dir):
     """
