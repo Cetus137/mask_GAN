@@ -33,30 +33,14 @@ class CellMaskDataset(Dataset):
         return image
 
 def get_data_loader(data_dir, batch_size, image_size):
-    def binarize_and_smooth(x):
-        # x is already a tensor with shape [C, H, W] from ToTensor()
-        # Convert integer mask to binary (0 for background, 1 for any cell)
-        binary = torch.where(x > 0.0, 1.0, 0.0)
-        
-        # Apply Gaussian smoothing using conv2d with Gaussian kernel
-        # Create Gaussian kernel
-        kernel_size = 5
-        sigma = 1.0
-        coords = torch.arange(kernel_size, dtype=torch.float32) - kernel_size // 2
-        coords = coords.repeat(kernel_size).view(kernel_size, kernel_size)
-        kernel = torch.exp(-(coords**2 + coords.t()**2) / (2 * sigma**2))
-        kernel = kernel / kernel.sum()
-        kernel = kernel.view(1, 1, kernel_size, kernel_size)
-        
-        # Apply convolution for smoothing - x is [C, H, W], need [1, C, H, W] for conv2d
-        binary = binary.unsqueeze(0)  # Add batch dim: [1, C, H, W]
-        smoothed = F.conv2d(binary, kernel, padding=kernel_size//2)
-        return smoothed.squeeze(0)  # Remove batch dim: [C, H, W]
+    def binarize_simple(x):
+        # Simple binarization: 0 for background, 1 for any cell
+        return torch.where(x > 0.0, 1.0, 0.0)
     
     transform = transforms.Compose([
         transforms.Resize((256, 256)),  # Always resize to 256x256
         transforms.ToTensor(),  # Converts to [0,1] range and normalizes
-        transforms.Lambda(binarize_and_smooth)  # Binarize integer masks then smooth
+        transforms.Lambda(binarize_simple)  # Simple binarization
     ])
     dataset = CellMaskDataset(root_dir=data_dir, transform=transform)
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)

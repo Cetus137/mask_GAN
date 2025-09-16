@@ -138,8 +138,9 @@ class Discriminator(nn.Module):
             nn.Conv2d(ndf * 16, ndf * 16, 4, 2, 1, bias=False),
             nn.BatchNorm2d(ndf * 16),
             nn.LeakyReLU(0.2, inplace=True),
-            # State size: ndf*16 x 4 x 4 -> 1 x 1 x 1 (no sigmoid for WGAN-GP)
-            nn.Conv2d(ndf * 16, 1, 4, 1, 0, bias=False)
+            # State size: ndf*16 x 4 x 4 -> 1 x 1 x 1
+            nn.Conv2d(ndf * 16, 1, 4, 1, 0, bias=False),
+            nn.Sigmoid()  # Add sigmoid for traditional GAN
         )
 
     def forward(self, input):
