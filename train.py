@@ -56,13 +56,13 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     
     fixed_noise = torch.randn(1, nz, 1, 1, device=device)  # Single image per epoch
     
-    # Clean labels without smoothing
+    # Clean binary labels without smoothing
     real_label = 1.0
     fake_label = 0.0
     
-    # Heavily favor generator learning - discriminator is too strong
-    optimizerD = optim.Adam(netD.parameters(), lr=lr * 0.1, betas=(beta1, 0.999))  # Discriminator learns 10x slower
-    optimizerG = optim.Adam(netG.parameters(), lr=lr * 2, betas=(beta1, 0.999))  # Generator learns 2x faster
+    # Extremely aggressive rebalancing - discriminator is completely dominating
+    optimizerD = optim.Adam(netD.parameters(), lr=lr * 0.01, betas=(beta1, 0.999))  # Discriminator learns 100x slower
+    optimizerG = optim.Adam(netG.parameters(), lr=lr * 5, betas=(beta1, 0.999))  # Generator learns 5x faster
     
     img_list = []
     G_losses = []
@@ -76,8 +76,8 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
             real_cpu = data.to(device)
             b_size = real_cpu.size(0)
             
-            # Update D network every other iteration to slow it down
-            if i % 2 == 0:
+            # Update D network only every 5 iterations - severely limit discriminator training
+            if i % 5 == 0:
                 netD.zero_grad()
                 real_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
                 output = netD(real_cpu).view(-1)
@@ -105,15 +105,16 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                     D_G_z1 = output.mean().item()
                     errD = torch.tensor(0.0)
             
-            # Update G network every iteration  
-            netG.zero_grad()
-            noise = torch.randn(b_size, nz, 1, 1, device=device)
-            fake = netG(noise)
-            gen_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
-            output = netD(fake).view(-1)
-            errG = criterion(output, gen_labels)
-            errG.backward()
-            optimizerG.step()
+            # Train generator 3 times per iteration - give it much more training
+            for g_step in range(3):
+                netG.zero_grad()
+                noise = torch.randn(b_size, nz, 1, 1, device=device)
+                fake = netG(noise)
+                gen_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
+                output = netD(fake).view(-1)
+                errG = criterion(output, gen_labels)
+                errG.backward()
+                optimizerG.step()
             
             D_G_z2 = output.mean().item()
             
