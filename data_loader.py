@@ -34,6 +34,7 @@ class CellMaskDataset(Dataset):
 
 def get_data_loader(data_dir, batch_size, image_size):
     def binarize_and_smooth(x):
+        # x is already a tensor with shape [C, H, W] from ToTensor()
         # Convert integer mask to binary (0 for background, 1 for any cell)
         binary = torch.where(x > 0.0, 1.0, 0.0)
         
@@ -47,10 +48,10 @@ def get_data_loader(data_dir, batch_size, image_size):
         kernel = kernel / kernel.sum()
         kernel = kernel.view(1, 1, kernel_size, kernel_size)
         
-        # Apply convolution for smoothing
-        binary = binary.unsqueeze(0).unsqueeze(0)  # Add batch and channel dims
+        # Apply convolution for smoothing - x is [C, H, W], need [1, C, H, W] for conv2d
+        binary = binary.unsqueeze(0)  # Add batch dim: [1, C, H, W]
         smoothed = F.conv2d(binary, kernel, padding=kernel_size//2)
-        return smoothed.squeeze(0).squeeze(0)  # Remove batch and channel dims
+        return smoothed.squeeze(0)  # Remove batch dim: [C, H, W]
     
     transform = transforms.Compose([
         transforms.Resize((256, 256)),  # Always resize to 256x256
