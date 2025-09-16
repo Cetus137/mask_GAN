@@ -60,9 +60,9 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     real_label = 1.0
     fake_label = 0.0
     
-    # Moderate rebalancing - find middle ground
-    optimizerD = optim.Adam(netD.parameters(), lr=lr * 0.2, betas=(beta1, 0.999))  # Discriminator learns 5x slower
-    optimizerG = optim.Adam(netG.parameters(), lr=lr * 2, betas=(beta1, 0.999))  # Generator learns 2x faster
+    # More aggressive discriminator handicapping
+    optimizerD = optim.Adam(netD.parameters(), lr=lr * 0.05, betas=(beta1, 0.999))  # Discriminator learns 20x slower
+    optimizerG = optim.Adam(netG.parameters(), lr=lr * 3, betas=(beta1, 0.999))  # Generator learns 3x faster
     
     img_list = []
     G_losses = []
@@ -76,8 +76,8 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
             real_cpu = data.to(device)
             b_size = real_cpu.size(0)
             
-            # Update D network every 3 iterations - moderate limitation
-            if i % 3 == 0:
+            # Update D network every 10 iterations - severe limitation
+            if i % 10 == 0:
                 netD.zero_grad()
                 real_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
                 output = netD(real_cpu).view(-1)
@@ -105,8 +105,8 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                     D_G_z1 = output.mean().item()
                     errD = torch.tensor(0.0)
             
-            # Train generator 2 times per iteration - moderate advantage
-            for g_step in range(2):
+            # Train generator 5 times per iteration - major advantage
+            for g_step in range(5):
                 netG.zero_grad()
                 noise = torch.randn(b_size, nz, 1, 1, device=device)
                 fake = netG(noise)
