@@ -143,7 +143,7 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     
     # WGAN-GP parameters - stable loss function
     lambda_gp = 10
-    n_critic = 5  # Train discriminator 5 times per generator update
+    n_critic = 1  # Balanced training: 1:1 ratio for small dataset
     
     # WGAN-GP optimizers with lower learning rates
     optimizerD = optim.Adam(netD.parameters(), lr=0.0001, betas=(0.0, 0.9))
