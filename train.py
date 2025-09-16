@@ -76,8 +76,8 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
             real_cpu = data.to(device)
             b_size = real_cpu.size(0)
             
-            # Update D network every 5 iterations - more balanced limitation
-            if i % 5 == 0:
+            # Update D network every 8 iterations - give generator more time to learn spatial patterns
+            if i % 8 == 0:
                 netD.zero_grad()
                 real_labels = torch.full((b_size,), real_label, dtype=torch.float, device=device)
                 output = netD(real_cpu).view(-1)
@@ -105,8 +105,8 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                     D_G_z1 = output.mean().item()
                     errD = torch.tensor(0.0)
             
-            # Train generator 3 times per iteration - moderate advantage
-            for g_step in range(3):
+            # Train generator 5 times per iteration - strong advantage for spatial learning
+            for g_step in range(5):
                 netG.zero_grad()
                 noise = torch.randn(b_size, nz, 1, 1, device=device)
                 fake = netG(noise)
@@ -117,7 +117,18 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 # Add binary regularization loss to encourage values close to 0 or 1
                 # Penalize values around 0.5 (middle of sigmoid range)
                 binary_loss = torch.mean(4 * fake * (1 - fake))  # This is maximized at 0.5, minimized at 0 and 1
-                errG = errG_adv + 0.1 * binary_loss  # Weight the binary loss component
+                
+                # Add spatial consistency loss to encourage large-scale structure
+                # Penalize high-frequency noise by encouraging spatial smoothness
+                fake_grad_x = torch.abs(fake[:, :, :, 1:] - fake[:, :, :, :-1])  # Horizontal gradients
+                fake_grad_y = torch.abs(fake[:, :, 1:, :] - fake[:, :, :-1, :])  # Vertical gradients
+                spatial_loss = torch.mean(fake_grad_x) + torch.mean(fake_grad_y)
+                
+                # Add total variation loss for even stronger spatial coherence
+                tv_loss = torch.mean(torch.abs(fake[:, :, :, 1:] - fake[:, :, :, :-1])) + \
+                         torch.mean(torch.abs(fake[:, :, 1:, :] - fake[:, :, :-1, :]))
+                
+                errG = errG_adv + 0.05 * binary_loss + 0.2 * spatial_loss + 0.1 * tv_loss
                 
                 errG.backward()
                 optimizerG.step()
