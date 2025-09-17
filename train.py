@@ -40,7 +40,7 @@ def gradient_penalty(netD, real_data, fake_data, device, lambda_gp=10):
     
     return gradient_penalty
 
-def save_comparison_image(fake_tensor, real_tensor, output_dir, epoch):
+def save_comparison_image(fake_tensor, real_tensor, output_dir, epoch, suffix=""):
     """Save comparison figure with generated and real images side by side"""
     
     # Convert tensors to numpy and handle [-1,1] range
@@ -67,7 +67,8 @@ def save_comparison_image(fake_tensor, real_tensor, output_dir, epoch):
     plt.tight_layout()
     
     # Save comparison figure
-    filename = f"{output_dir}/comparison_epoch_{epoch:03d}.png"
+    suffix_str = f"_{suffix}" if suffix else ""
+    filename = f"{output_dir}/comparison_epoch_{epoch:03d}{suffix_str}.png"
     plt.savefig(filename, dpi=150, bbox_inches='tight')
     plt.close()
     
@@ -75,10 +76,44 @@ def save_comparison_image(fake_tensor, real_tensor, output_dir, epoch):
     fake_np = (fake_img * 255).clip(0, 255).astype(np.uint8)
     real_np = (real_img * 255).clip(0, 255).astype(np.uint8)
     
-    Image.fromarray(fake_np, mode='L').save(f"{output_dir}/generated_epoch_{epoch:03d}.tif")
-    Image.fromarray(real_np, mode='L').save(f"{output_dir}/target_epoch_{epoch:03d}.tif")
+    Image.fromarray(fake_np, mode='L').save(f"{output_dir}/generated_epoch_{epoch:03d}{suffix_str}.tif")
+    Image.fromarray(real_np, mode='L').save(f"{output_dir}/target_epoch_{epoch:03d}{suffix_str}.tif")
     
-    print(f"Saved comparison image for epoch {epoch}")
+    print(f"Saved comparison image for epoch {epoch}{suffix_str}")
+
+def save_varied_samples(fake_tensor, output_dir, epoch):
+    """Save a grid of varied generated samples to show diversity"""
+    
+    # Convert tensors to numpy and handle [-1,1] range
+    num_samples = fake_tensor.shape[0]
+    
+    # Create a grid of samples
+    fig, axes = plt.subplots(1, num_samples, figsize=(num_samples * 3, 3))
+    if num_samples == 1:
+        axes = [axes]  # Handle single sample case
+    
+    for i in range(num_samples):
+        fake_img = fake_tensor[i].squeeze(0).cpu().numpy()  # Remove channel dimension
+        
+        # Convert from [-1,1] to [0,1] for visualization
+        fake_img = (fake_img + 1.0) / 2.0
+        
+        axes[i].imshow(fake_img, cmap='gray', vmin=0, vmax=1)
+        axes[i].set_title(f'Sample {i+1}')
+        axes[i].axis('off')
+        
+        # Save individual TIF file
+        fake_np = (fake_img * 255).clip(0, 255).astype(np.uint8)
+        Image.fromarray(fake_np, mode='L').save(f"{output_dir}/varied_sample_{i+1}_epoch_{epoch:03d}.tif")
+    
+    plt.tight_layout()
+    
+    # Save grid figure
+    filename = f"{output_dir}/varied_samples_epoch_{epoch:03d}.png"
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Saved {num_samples} varied samples for epoch {epoch}")
 
 def gradient_penalty(netD, real_data, fake_data, device, lambda_gp=10):
     """Calculate gradient penalty for WGAN-GP"""
@@ -109,7 +144,7 @@ def gradient_penalty(netD, real_data, fake_data, device, lambda_gp=10):
     
     return penalty
 
-def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, beta1, output_dir):
+def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, beta1, output_dir, resume_from=None):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     
     # Create output directory if it doesn't exist
@@ -139,7 +174,10 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     print(f"Generator parameters: {sum(p.numel() for p in netG.parameters()):,}")
     print(f"Discriminator parameters: {sum(p.numel() for p in netD.parameters()):,}")
     
-    fixed_noise = torch.randn(1, nz, 1, 1, device=device)  # Single image per epoch
+    # Create multiple fixed noise vectors for consistent progress tracking
+    fixed_noise = torch.randn(1, nz, 1, 1, device=device)  # Fixed for progress tracking
+    num_samples = 4  # Generate multiple samples each epoch
+    sample_noise = torch.randn(num_samples, nz, 1, 1, device=device)  # Different samples each time
     
     # WGAN-GP parameters - stable loss function
     lambda_gp = 10
@@ -153,12 +191,43 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
     G_losses = []
     D_losses = []
     iters = 0
+    start_epoch = 0
+    
+    # Load checkpoint if resuming training
+    if resume_from is not None:
+        if os.path.isfile(resume_from):
+            print(f"Loading checkpoint from {resume_from}")
+            checkpoint = torch.load(resume_from, map_location=device)
+            
+            # Load model states
+            netG.load_state_dict(checkpoint['netG_state_dict'])
+            netD.load_state_dict(checkpoint['netD_state_dict'])
+            
+            # Load optimizer states
+            optimizerG.load_state_dict(checkpoint['optimizerG_state_dict'])
+            optimizerD.load_state_dict(checkpoint['optimizerD_state_dict'])
+            
+            # Load training progress
+            start_epoch = checkpoint['epoch'] + 1  # Start from next epoch
+            if 'G_losses' in checkpoint:
+                G_losses = checkpoint['G_losses']
+            if 'D_losses' in checkpoint:
+                D_losses = checkpoint['D_losses']
+            if 'iters' in checkpoint:
+                iters = checkpoint.get('iters', 0)
+            
+            print(f"Resuming training from epoch {start_epoch}")
+            print(f"Loaded {len(G_losses)} generator loss values")
+            print(f"Loaded {len(D_losses)} discriminator loss values")
+        else:
+            print(f"Warning: Checkpoint file {resume_from} not found. Starting fresh training.")
     
     print("Starting WGAN-GP Training Loop...")
     print(f"Using device: {device}")
     print(f"Lambda GP: {lambda_gp}, n_critic: {n_critic}")
+    print(f"Starting from epoch: {start_epoch}")
     
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         for i, data in enumerate(dataloader, 0):
             real_cpu = data.to(device)
             b_size = real_cpu.size(0)
@@ -233,17 +302,28 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
         print(f"Final D(G(z)): {D_G_z2:.6f} (want ~0.5)")
         print("=" * 40)
         
-        # Save comparison image every 10 epochs
+        # Save comparison images every 10 epochs
         if (epoch + 1) % 10 == 0 and len(dataloader) > 0:
             with torch.no_grad():
-                fake = netG(fixed_noise).detach().cpu()
+                # Option 1: Generate fixed sample for progress tracking (same input each time)
+                fake_fixed = netG(fixed_noise).detach().cpu()
+                
+                # Option 2: Generate completely new random samples each epoch
+                random_noise = torch.randn(num_samples, nz, 1, 1, device=device)
+                fake_random = netG(random_noise).detach().cpu()
+                
                 # Get a real sample for comparison
                 real_sample = next(iter(dataloader))  # Get first batch
                 real_sample = real_sample.cpu()
-            save_comparison_image(fake, real_sample, output_dir, epoch)
+                
+            # Save fixed sample (for tracking training progress on same input)
+            save_comparison_image(fake_fixed, real_sample, output_dir, epoch, suffix="fixed")
+            
+            # Save random samples (for showing diversity and preventing "always same" issue)
+            save_varied_samples(fake_random, output_dir, epoch)
         
-        # Save model every 5 epochs
-        if (epoch + 1) % 50 == 0:
+        # Save model every 20 epochs (more frequent for better resumability)
+        if (epoch + 1) % 20 == 0:
             model_dir = os.path.join(output_dir, "models")
             os.makedirs(model_dir, exist_ok=True)
             torch.save({
@@ -254,5 +334,105 @@ def train(data_dir, nz, nc, ngf, ndf, num_epochs, batch_size, image_size, lr, be
                 'optimizerD_state_dict': optimizerD.state_dict(),
                 'G_losses': G_losses,
                 'D_losses': D_losses,
+                'iters': iters,
             }, f"{model_dir}/checkpoint_epoch_{epoch:03d}.pth")
             print(f"Saved model checkpoint at epoch {epoch}")
+    
+    # Save final checkpoint
+    print("Training completed! Saving final checkpoint...")
+    model_dir = os.path.join(output_dir, "models")
+    os.makedirs(model_dir, exist_ok=True)
+    final_checkpoint_path = f"{model_dir}/final_checkpoint.pth"
+    torch.save({
+        'epoch': num_epochs - 1,
+        'netG_state_dict': netG.state_dict(),
+        'netD_state_dict': netD.state_dict(),
+        'optimizerG_state_dict': optimizerG.state_dict(),
+        'optimizerD_state_dict': optimizerD.state_dict(),
+        'G_losses': G_losses,
+        'D_losses': D_losses,
+        'iters': iters,
+        'training_complete': True,
+    }, final_checkpoint_path)
+    print(f"Final checkpoint saved to: {final_checkpoint_path}")
+    
+    return netG, netD, G_losses, D_losses
+
+def load_trained_model(checkpoint_path, nz=100, nc=1, ngf=64, ndf=64, device=None):
+    """
+    Load a trained GAN model from checkpoint for inference or continued training.
+    
+    Args:
+        checkpoint_path: Path to the checkpoint file
+        nz: Size of noise vector (should match training)
+        nc: Number of channels (should match training) 
+        ngf: Generator feature map size (should match training)
+        ndf: Discriminator feature map size (should match training)
+        device: Device to load model on (cuda/cpu)
+    
+    Returns:
+        tuple: (generator, discriminator, training_info)
+    """
+    if device is None:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    
+    # Initialize models with same architecture
+    netG = Generator(nz, ngf, nc).to(device)
+    netD = Discriminator(nc, ndf).to(device)
+    
+    # Load checkpoint
+    print(f"Loading trained model from {checkpoint_path}")
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    
+    # Load model weights
+    netG.load_state_dict(checkpoint['netG_state_dict'])
+    netD.load_state_dict(checkpoint['netD_state_dict'])
+    
+    # Set to evaluation mode
+    netG.eval()
+    netD.eval()
+    
+    # Extract training info
+    training_info = {
+        'epoch': checkpoint.get('epoch', 'unknown'),
+        'G_losses': checkpoint.get('G_losses', []),
+        'D_losses': checkpoint.get('D_losses', []),
+        'iters': checkpoint.get('iters', 0),
+        'training_complete': checkpoint.get('training_complete', False)
+    }
+    
+    print(f"Loaded model from epoch {training_info['epoch']}")
+    print(f"Training was {'complete' if training_info['training_complete'] else 'incomplete'}")
+    
+    return netG, netD, training_info
+
+def generate_samples(generator, num_samples=4, nz=100, device=None, output_dir=None):
+    """
+    Generate samples using a trained generator.
+    
+    Args:
+        generator: Trained generator model
+        num_samples: Number of samples to generate
+        nz: Size of noise vector
+        device: Device to use for generation
+        output_dir: Optional directory to save samples
+    
+    Returns:
+        torch.Tensor: Generated samples
+    """
+    if device is None:
+        device = next(generator.parameters()).device
+    
+    generator.eval()
+    with torch.no_grad():
+        noise = torch.randn(num_samples, nz, 1, 1, device=device)
+        samples = generator(noise)
+    
+    if output_dir:
+        from utils import save_individual_tif_images, save_individual_float32_tif_images
+        os.makedirs(output_dir, exist_ok=True)
+        save_individual_tif_images(samples, output_dir, "inference_sample")
+        save_individual_float32_tif_images(samples, output_dir, "inference_sample_float32")
+        print(f"Saved {num_samples} generated samples to {output_dir}")
+    
+    return samples

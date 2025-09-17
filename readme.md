@@ -31,8 +31,19 @@ This project implements a Generative Adversarial Network (GAN) for generating re
 
 ## Usage
 
+### Training from Scratch
 ```bash
 python main.py --data_dir /path/to/probability/masks --output_dir /path/to/output
+```
+
+### Resume Training from Checkpoint
+```bash
+python main.py --data_dir /path/to/probability/masks --output_dir /path/to/output --resume_from /path/to/checkpoint.pth
+```
+
+### Generate Samples from Trained Model
+```bash
+python inference.py --checkpoint /path/to/checkpoint.pth --output_dir /path/to/inference_output --num_samples 10
 ```
 
 ## Input Data Format
@@ -56,3 +67,34 @@ All inputs are automatically normalized to the [-1,1] range for optimal training
 - **8-bit TIFF**: Converted to [0,255] range for standard image viewing
 - **32-bit Float TIFF**: Raw [-1,1] values for full precision
 - **Normalized 32-bit Float TIFF**: Converted to [0,1] range for easier interpretation
+
+## Checkpoint Management
+
+### Automatic Checkpoints
+- **Regular Checkpoints**: Saved every 20 epochs in `/output_dir/models/checkpoint_epoch_XXX.pth`
+- **Final Checkpoint**: Saved as `/output_dir/models/final_checkpoint.pth` when training completes
+
+### Checkpoint Contents
+Each checkpoint includes:
+- Model states (Generator and Discriminator)
+- Optimizer states (for exact resume)
+- Training progress (losses, epoch, iteration count)
+- Training completion status
+
+### Resume Training
+Use `--resume_from` parameter to continue training from any checkpoint:
+```bash
+python main.py --resume_from /path/to/models/checkpoint_epoch_100.pth
+```
+
+### Inference with Trained Models
+Use the `inference.py` script to generate samples from trained models:
+```bash
+python inference.py --checkpoint /path/to/final_checkpoint.pth --num_samples 20
+```
+
+## Utility Functions
+
+The training module provides utility functions for programmatic use:
+- `load_trained_model()`: Load a checkpoint for inference or continued training
+- `generate_samples()`: Generate samples using a trained generator

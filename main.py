@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--image_size', type=int, default=256, help='Spatial size of training images.')
     parser.add_argument('--lr', type=float, default=0.0002, help='Learning rate for optimizers.')
     parser.add_argument('--beta1', type=float, default=0.5, help='Beta1 hyperparameter for Adam optimizers.')
+    parser.add_argument('--resume_from', type=str, default=None, help='Path to checkpoint file to resume training from.')
     
     args = parser.parse_args()
     
@@ -32,7 +33,8 @@ def main():
         image_size=args.image_size,
         lr=args.lr,
         beta1=args.beta1,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        resume_from=args.resume_from
     )
     print("Training finished.")
 
