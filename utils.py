@@ -5,16 +5,45 @@ import numpy as np
 from PIL import Image
 
 def save_individual_tif_images(tensor, output_dir, prefix="generated"):
-    """Save individual 256x256 grayscale TIF files"""
+    """Save individual 256x256 grayscale TIF files with continuous values"""
     for i, img in enumerate(tensor):
         # Convert single image tensor to numpy
         img_np = img.squeeze(0).cpu().numpy()  # Remove channel dimension if single channel
         
-        # Denormalize from [-1, 1] to [0, 255]
-        img_np = ((img_np + 1) * 127.5).clip(0, 255).astype(np.uint8)
+        # Convert from [-1, 1] range to [0, 255] for 8-bit TIF
+        img_np = ((img_np + 1.0) * 127.5).clip(0, 255).astype(np.uint8)
         
         # Save as grayscale TIF
         im = Image.fromarray(img_np, mode='L')
+        filename = f"{output_dir}/{prefix}_img_{i:02d}.tif"
+        im.save(filename)
+
+def save_individual_float32_tif_images(tensor, output_dir, prefix="generated_float32"):
+    """Save individual 256x256 32-bit float TIF files preserving full continuous value precision"""
+    for i, img in enumerate(tensor):
+        # Convert single image tensor to numpy
+        img_np = img.squeeze(0).cpu().numpy().astype(np.float32)  # Remove channel dimension
+        
+        # Keep data in [-1, 1] range as 32-bit float values (no conversion)
+        img_np = np.clip(img_np, -1.0, 1.0)
+        
+        # Save as 32-bit float TIF
+        im = Image.fromarray(img_np, mode='F')
+        filename = f"{output_dir}/{prefix}_img_{i:02d}.tif"
+        im.save(filename)
+
+def save_individual_normalized_float32_tif_images(tensor, output_dir, prefix="generated_normalized"):
+    """Save individual 256x256 32-bit float TIF files normalized to [0,1] range"""
+    for i, img in enumerate(tensor):
+        # Convert single image tensor to numpy
+        img_np = img.squeeze(0).cpu().numpy().astype(np.float32)  # Remove channel dimension
+        
+        # Convert from [-1, 1] to [0, 1] range for easier interpretation
+        img_np = (img_np + 1.0) / 2.0
+        img_np = np.clip(img_np, 0.0, 1.0)
+        
+        # Save as 32-bit float TIF
+        im = Image.fromarray(img_np, mode='F')
         filename = f"{output_dir}/{prefix}_img_{i:02d}.tif"
         im.save(filename)
 

@@ -47,7 +47,7 @@ def save_comparison_image(fake_tensor, real_tensor, output_dir, epoch):
     fake_img = fake_tensor[0].squeeze(0).cpu().numpy()  # Remove channel dimension
     real_img = real_tensor[0].squeeze(0).cpu().numpy()  # Remove channel dimension
     
-    # Convert from [-1,1] to [0,1] for display
+    # Convert from [-1,1] to [0,1] for visualization
     fake_img = (fake_img + 1.0) / 2.0
     real_img = (real_img + 1.0) / 2.0
     
